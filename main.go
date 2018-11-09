@@ -3,18 +3,14 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
+	"net/http"
+	"os"
+	"regexp"
+	"strconv"
 	"time"
 
-	"log"
-
-	"os"
-
-	"regexp"
-
-	"strconv"
-
 	"github.com/gocolly/colly"
-
 	"gopkg.in/telegram-bot-api.v4"
 )
 
@@ -71,7 +67,9 @@ func main() {
 	Init(os.Stdout, os.Stdout, os.Stdout,
 		os.Stderr)
 
-	var termIn = "201910"
+	go listen()
+
+	var termIn = "201920"
 
 	monitorChannel := make(chan MonitorMessage)
 
@@ -95,18 +93,12 @@ func main() {
 
 	go courseNotifier(*bot, termIn, monitorChannel, addChannel)
 
-	// fmt.Print(<-addChannel)
-
-	// fmt.Print(<-monitorChannel)
-
-	// fmt.Print(<-monitorChannel)
-
-	// fmt.Print(<-monitorChannel)
-
-	// fmt.Print(<-monitorChannel)
-
 	fmt.Print(<-exit)
 
+}
+
+func listen() {
+	http.ListenAndServe(":"+os.Getenv("PORT"), nil)
 }
 
 func telegramMessageHandler(bot tgbotapi.BotAPI, termIn string, addChannel chan AddMessage) {
@@ -205,6 +197,9 @@ func telegramMessageHandler(bot tgbotapi.BotAPI, termIn string, addChannel chan 
 
 					bot.Send(msg)
 
+					Trace.Println("User " + strconv.FormatInt(chatID, 10) + " has used code " + messageText)
+					sendMessageToAdmin(bot, "User "+strconv.FormatInt(chatID, 10)+" has used code "+messageText)
+
 				} else {
 
 					msg := tgbotapi.NewMessage(chatID, "AUTH FAIL\nPlease contact admin.")
@@ -276,15 +271,16 @@ func courseNotifier(bot tgbotapi.BotAPI, termIn string, monitorChannel chan Moni
 
 			if ok {
 				Trace.Println(addMessage)
+				sendMessageToAdmin(bot, "New Add Message:\nAdded crn: "+addMessage.crn+"\nTelegram ID: "+strconv.FormatInt(addMessage.telegramID, 10))
 
 				done := false
 
-				for _, v := range courseArray {
+				for i, v := range courseArray {
 
 					if v.crn == addMessage.crn {
 
-						v.telegramIds = append(v.telegramIds, addMessage.telegramID)
-
+						courseArray[i].telegramIds = append(v.telegramIds, addMessage.telegramID)
+						Trace.Println("Duplicate course")
 						done = true
 					}
 				}
@@ -298,6 +294,16 @@ func courseNotifier(bot tgbotapi.BotAPI, termIn string, monitorChannel chan Moni
 					done = true
 				}
 
+				Trace.Println(courseArray)
+				courseString := ""
+				for _, v := range courseArray {
+					courseString += v.crn + " monitored by:\n"
+					for _, w := range v.telegramIds {
+						courseString += strconv.FormatInt(w, 10) + "\n"
+					}
+				}
+				sendMessageToAdmin(bot, "COURSE ARRAY:\n"+courseString)
+
 			} else {
 
 			}
@@ -305,8 +311,9 @@ func courseNotifier(bot tgbotapi.BotAPI, termIn string, monitorChannel chan Moni
 		case monitorMessage, ok := <-monitorChannel:
 
 			if ok {
+				Trace.Println(monitorMessage)
+				sendMessageToAdmin(bot, "New Monitor Message:\nNew spot in: "+monitorMessage.crn+"\nSpots left: "+strconv.Itoa(monitorMessage.spotsLeft))
 				for _, course := range courseArray {
-
 					if course.crn == monitorMessage.crn {
 						for _, telegramID := range course.telegramIds {
 							msg := tgbotapi.NewMessage(telegramID, "There is a new spot in "+monitorMessage.crn+".\nHurry there are "+strconv.Itoa(monitorMessage.spotsLeft)+" spots left.")
@@ -321,6 +328,11 @@ func courseNotifier(bot tgbotapi.BotAPI, termIn string, monitorChannel chan Moni
 		}
 	}
 
+}
+
+func sendMessageToAdmin(bot tgbotapi.BotAPI, message string) {
+	msg := tgbotapi.NewMessage(adminID, message)
+	bot.Send(msg)
 }
 
 func trackCourseCapacity(termIn string, crn string, monitorChannel chan MonitorMessage) {
